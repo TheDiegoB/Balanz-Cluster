@@ -15,6 +15,8 @@ from pathlib import Path
 APP_DIR = Path(__file__).parent
 sys.path.insert(0, str(APP_DIR))
 
+COMISION_PCTAJE = 0.45  # Tu parte de las comisiones
+
 # ── CONFIG ────────────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="Cluster Asesor · Balanz",
@@ -46,6 +48,8 @@ st.markdown("""
     border: 1px solid #30363d; border-radius: 14px;
     padding: 22px 32px; margin-bottom: 20px;
   }
+  .tag-bruto  { background:#1f6feb22; color:#58a6ff; border:1px solid #1f6feb55; padding:2px 8px; border-radius:20px; font-size:11px; font-weight:600; }
+  .tag-neto   { background:#3fb95022; color:#3fb950; border:1px solid #3fb95055; padding:2px 8px; border-radius:20px; font-size:11px; font-weight:600; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -54,8 +58,7 @@ DATA_PATH = APP_DIR / "data" / "cluster.csv"
 
 @st.cache_data(ttl=60)
 def load_data(path: Path) -> pd.DataFrame:
-    df = pd.read_csv(path)
-    return df
+    return pd.read_csv(path)
 
 def clean_df(df: pd.DataFrame) -> pd.DataFrame:
     numeric_cols = [
@@ -71,6 +74,11 @@ def clean_df(df: pd.DataFrame) -> pd.DataFrame:
     for col in ["Fecha de Alta", "primerfondeo"]:
         if col in df.columns:
             df[col] = pd.to_datetime(df[col], errors="coerce")
+    # Columnas de comisión neta (tu 45%)
+    for period in ["90d", "180", "1y"]:
+        col = f"Comision {period}"
+        if col in df.columns:
+            df[f"Neto {period}"] = df[col] * COMISION_PCTAJE
     return df
 
 def fmt_usd(v): return f"USD {v:,.0f}"
@@ -121,8 +129,12 @@ with st.sidebar:
     aum_min = st.slider("AUM mínimo (USD)", 0, aum_max, 0, step=100, format="$%d")
 
     st.markdown("---")
+    pct_display = st.slider("Tu % de comisión", min_value=10, max_value=100, value=45, step=1, format="%d%%")
+    pct_factor = pct_display / 100
+
+    st.markdown("---")
     st.markdown("**💡 Para actualizar datos:**")
-    st.markdown("Exportá el cluster desde Balanz y reemplazá `data/cluster.csv` en el repo de GitHub.")
+    st.markdown("Reemplazá `data/cluster.csv` en el repo.")
 
 # ── FILTROS ────────────────────────────────────────────────────────────────────
 fdf = df.copy()
@@ -152,24 +164,93 @@ st.markdown(f"""
 # ── KPIs ───────────────────────────────────────────────────────────────────────
 st.markdown('<div class="section-title">Resumen general</div>', unsafe_allow_html=True)
 
-total_aum   = fdf["AUM en Dolares"].sum()
-n_total     = len(fdf)
-n_activas   = int(fdf["activo"].sum())
-pct_activas = (n_activas / n_total * 100) if n_total else 0
-com_1y      = fdf["Comision 1y"].sum()
-com_90d     = fdf["Comision 90d"].sum()
-aum_fondos  = fdf["Fondos Arg"].sum()
-pct_fondos  = (aum_fondos / total_aum * 100) if total_aum else 0
-ticket_prom = total_aum / n_activas if n_activas else 0
+total_aum    = fdf["AUM en Dolares"].sum()
+n_total      = len(fdf)
+n_activas    = int(fdf["activo"].sum())
+pct_activas  = (n_activas / n_total * 100) if n_total else 0
+com_1y_bruto = fdf["Comision 1y"].sum()
+com_1y_neto  = com_1y_bruto * pct_factor
+com_90d_bruto= fdf["Comision 90d"].sum()
+com_90d_neto = com_90d_bruto * pct_factor
+aum_fondos   = fdf["Fondos Arg"].sum()
+pct_fondos   = (aum_fondos / total_aum * 100) if total_aum else 0
+ticket_prom  = total_aum / n_activas if n_activas else 0
 
-c1,c2,c3,c4,c5,c6,c7 = st.columns(7)
-c1.metric("AUM Total",        fmt_k(total_aum))
-c2.metric("Cuentas",          n_total, f"{n_activas} activas")
-c3.metric("Tasa actividad",   fmt_pct(pct_activas))
-c4.metric("Ticket promedio",  fmt_k(ticket_prom))
-c5.metric("Comisiones 1 año", fmt_usd(com_1y))
-c6.metric("Comisiones 90d",   fmt_usd(com_90d))
-c7.metric("Peso fondos",      fmt_pct(pct_fondos))
+c1,c2,c3,c4,c5,c6 = st.columns(6)
+c1.metric("AUM Total",         fmt_k(total_aum))
+c2.metric("Cuentas",           n_total, f"{n_activas} activas")
+c3.metric("Tasa actividad",    fmt_pct(pct_activas))
+c4.metric("Ticket promedio",   fmt_k(ticket_prom))
+c5.metric("Peso fondos",       fmt_pct(pct_fondos))
+c6.metric("Tu % comisión",     fmt_pct(pct_factor * 100))
+
+# KPIs de comisiones — bruto vs neto
+st.markdown('<div class="section-title">Comisiones — Bruto vs Tu parte ({:.0f}%)</div>'.format(pct_factor*100), unsafe_allow_html=True)
+
+k1,k2,k3,k4,k5,k6 = st.columns(6)
+k1.metric("Bruto 90d",   fmt_usd(com_90d_bruto))
+k2.metric(f"Neto 90d ({pct_display}%)",  fmt_usd(com_90d_neto))
+k3.metric("Bruto 180d",  fmt_usd(fdf["Comision 180"].sum()))
+k4.metric(f"Neto 180d ({pct_display}%)", fmt_usd(fdf["Comision 180"].sum() * pct_factor))
+k5.metric("Bruto 1 año", fmt_usd(com_1y_bruto))
+k6.metric(f"Neto 1 año ({pct_display}%)",fmt_usd(com_1y_neto))
+
+# ── RANKING COMISIONES POR CUENTA ─────────────────────────────────────────────
+st.markdown('<div class="section-title">Ranking de cuentas por comisión generada</div>', unsafe_allow_html=True)
+
+col_rank, col_scatter = st.columns([1, 1])
+
+with col_rank:
+    rank = fdf[["idcuenta","comitente","AUM en Dolares","Comision 1y","arancel"]].copy()
+    rank["Neto 1y"] = rank["Comision 1y"] * pct_factor
+    rank = rank.sort_values("Comision 1y", ascending=False).reset_index(drop=True)
+    rank.index += 1  # ranking desde 1
+
+    fig_rank = go.Figure()
+    fig_rank.add_trace(go.Bar(
+        y=rank["comitente"].astype(str),
+        x=rank["Comision 1y"],
+        orientation="h",
+        name="Bruto",
+        marker_color="#1f6feb",
+        text=[fmt_usd(v) for v in rank["Comision 1y"]],
+        textposition="outside",
+        textfont=dict(size=10, color="#8b949e"),
+    ))
+    fig_rank.add_trace(go.Bar(
+        y=rank["comitente"].astype(str),
+        x=rank["Neto 1y"],
+        orientation="h",
+        name=f"Tu parte ({pct_display}%)",
+        marker_color="#3fb950",
+        text=[fmt_usd(v) for v in rank["Neto 1y"]],
+        textposition="outside",
+        textfont=dict(size=10, color="#8b949e"),
+    ))
+    fig_rank.update_layout(
+        title="Comisión 1 año por cuenta (bruto vs neto)",
+        barmode="group",
+        height=max(350, len(rank) * 28),
+        legend=dict(bgcolor="#161b22", bordercolor="#30363d", borderwidth=1),
+        **PLOTLY,
+    )
+    st.plotly_chart(fig_rank, use_container_width=True)
+
+with col_scatter:
+    # Scatter AUM vs Comisión — todos, incluyendo los de comisión 0
+    fig_sc = px.scatter(
+        fdf,
+        x="AUM en Dolares",
+        y="Comision 1y",
+        color="arancel" if "arancel" in fdf.columns else None,
+        size="AUM en Dolares",
+        size_max=30,
+        hover_data=["idcuenta","comitente","Comision 1y"],
+        title="AUM vs Comisión 1 año (todas las cuentas)",
+        color_discrete_sequence=["#1f6feb","#3fb950","#ffa657","#f78166"],
+    )
+    fig_sc.update_layout(height=450, legend=dict(bgcolor="#161b22", bordercolor="#30363d", borderwidth=1), **PLOTLY)
+    st.plotly_chart(fig_sc, use_container_width=True)
 
 # ── COMPOSICIÓN AUM ────────────────────────────────────────────────────────────
 st.markdown('<div class="section-title">Composición de cartera</div>', unsafe_allow_html=True)
@@ -184,54 +265,68 @@ with col1:
         "Cable":      fdf["cable"].sum(),
     }
     aum_data = {k: v for k, v in aum_data.items() if v > 0}
-    fig = go.Figure(go.Pie(
+    fig_d = go.Figure(go.Pie(
         labels=list(aum_data.keys()), values=list(aum_data.values()),
         hole=0.6, marker_colors=["#1f6feb","#3fb950","#f78166","#ffa657"],
         textinfo="label+percent", textfont_size=12,
     ))
-    fig.add_annotation(text=f"<b>{fmt_k(total_aum)}</b>", x=0.5, y=0.5,
-                       showarrow=False, font=dict(size=13, color="#e6edf3"))
-    fig.update_layout(title="AUM por tipo de activo", showlegend=False, height=300, **PLOTLY)
-    st.plotly_chart(fig, use_container_width=True)
+    fig_d.add_annotation(text=f"<b>{fmt_k(total_aum)}</b>", x=0.5, y=0.5,
+                         showarrow=False, font=dict(size=13, color="#e6edf3"))
+    fig_d.update_layout(title="AUM por tipo de activo", showlegend=False, height=300, **PLOTLY)
+    st.plotly_chart(fig_d, use_container_width=True)
 
 with col2:
     if "arancel" in fdf.columns:
         ar = fdf.groupby("arancel")["AUM en Dolares"].sum().sort_values()
-        fig2 = go.Figure(go.Bar(
+        fig_ar = go.Figure(go.Bar(
             x=ar.values, y=ar.index, orientation="h", marker_color="#1f6feb",
             text=[fmt_k(v) for v in ar.values], textposition="outside",
             textfont=dict(color="#8b949e", size=11),
         ))
-        fig2.update_layout(title="AUM por arancel", height=300, **PLOTLY)
-        st.plotly_chart(fig2, use_container_width=True)
+        fig_ar.update_layout(title="AUM por arancel", height=300, **PLOTLY)
+        st.plotly_chart(fig_ar, use_container_width=True)
 
 with col3:
     if "arancel" in fdf.columns:
         cnt = fdf.groupby("arancel").size().sort_values()
-        fig3 = go.Figure(go.Bar(
+        fig_cnt = go.Figure(go.Bar(
             x=cnt.values, y=cnt.index, orientation="h", marker_color="#3fb950",
             text=cnt.values, textposition="outside",
             textfont=dict(color="#8b949e", size=11),
         ))
-        fig3.update_layout(title="Cuentas por arancel", height=300, **PLOTLY)
-        st.plotly_chart(fig3, use_container_width=True)
+        fig_cnt.update_layout(title="Cuentas por arancel", height=300, **PLOTLY)
+        st.plotly_chart(fig_cnt, use_container_width=True)
 
-# ── COMISIONES ─────────────────────────────────────────────────────────────────
-st.markdown('<div class="section-title">Comisiones generadas</div>', unsafe_allow_html=True)
+# ── COMISIONES BRUTO VS NETO ───────────────────────────────────────────────────
+st.markdown('<div class="section-title">Evolución de comisiones</div>', unsafe_allow_html=True)
 
-col_a, col_b, col_c = st.columns(3)
+col_a, col_b = st.columns(2)
 
 with col_a:
-    periodos = ["90 días", "180 días", "1 año"]
-    valores  = [fdf["Comision 90d"].sum(), fdf["Comision 180"].sum(), fdf["Comision 1y"].sum()]
-    fig4 = go.Figure(go.Bar(
-        x=periodos, y=valores,
-        marker_color=["#3fb950","#1f6feb","#ffa657"],
-        text=[fmt_usd(v) for v in valores], textposition="outside",
+    periodos      = ["90 días", "180 días", "1 año"]
+    brutos        = [fdf["Comision 90d"].sum(), fdf["Comision 180"].sum(), fdf["Comision 1y"].sum()]
+    netos         = [v * pct_factor for v in brutos]
+
+    fig_com = go.Figure()
+    fig_com.add_trace(go.Bar(
+        x=periodos, y=brutos, name="Bruto",
+        marker_color="#1f6feb",
+        text=[fmt_usd(v) for v in brutos], textposition="outside",
         textfont=dict(color="#8b949e", size=11),
     ))
-    fig4.update_layout(title="Comisiones por período", height=300, **PLOTLY)
-    st.plotly_chart(fig4, use_container_width=True)
+    fig_com.add_trace(go.Bar(
+        x=periodos, y=netos, name=f"Tu parte ({pct_display}%)",
+        marker_color="#3fb950",
+        text=[fmt_usd(v) for v in netos], textposition="outside",
+        textfont=dict(color="#8b949e", size=11),
+    ))
+    fig_com.update_layout(
+        title="Comisiones bruto vs neto por período",
+        barmode="group", height=320,
+        legend=dict(bgcolor="#161b22", bordercolor="#30363d", borderwidth=1),
+        **PLOTLY,
+    )
+    st.plotly_chart(fig_com, use_container_width=True)
 
 with col_b:
     com_mix = {
@@ -241,54 +336,41 @@ with col_b:
     }
     com_mix = {k: v for k, v in com_mix.items() if v > 0}
     if com_mix:
-        fig5 = go.Figure(go.Pie(
+        fig_mix = go.Figure(go.Pie(
             labels=list(com_mix.keys()), values=list(com_mix.values()),
             hole=0.55, marker_colors=["#1f6feb","#3fb950","#ffa657"],
             textinfo="label+percent",
         ))
-        fig5.add_annotation(text=f"<b>{fmt_usd(com_1y)}</b>", x=0.5, y=0.5,
-                            showarrow=False, font=dict(size=12, color="#e6edf3"))
-        fig5.update_layout(title="Mix comisiones (1 año)", showlegend=False, height=300, **PLOTLY)
-        st.plotly_chart(fig5, use_container_width=True)
-
-with col_c:
-    scatter_df = fdf[fdf["Comision 1y"] > 0].copy()
-    if not scatter_df.empty:
-        fig6 = px.scatter(
-            scatter_df, x="AUM en Dolares", y="Comision 1y",
-            color="arancel" if "arancel" in scatter_df.columns else None,
-            hover_data=["idcuenta","comitente"],
-            title="AUM vs Comisión por cuenta",
-            color_discrete_sequence=["#1f6feb","#3fb950","#ffa657","#f78166"],
+        fig_mix.add_annotation(
+            text=f"<b>{fmt_usd(com_1y_bruto)}</b><br><span style='font-size:10px'>bruto</span>",
+            x=0.5, y=0.5, showarrow=False, font=dict(size=12, color="#e6edf3"),
         )
-        fig6.update_layout(height=300, **PLOTLY)
-        st.plotly_chart(fig6, use_container_width=True)
+        fig_mix.update_layout(title="Mix comisiones 1 año (bruto)", showlegend=False, height=320, **PLOTLY)
+        st.plotly_chart(fig_mix, use_container_width=True)
 
 # ── CRECIMIENTO HISTÓRICO ──────────────────────────────────────────────────────
 if "primerfondeo" in fdf.columns:
     st.markdown('<div class="section-title">Crecimiento histórico</div>', unsafe_allow_html=True)
-
     ff = fdf.dropna(subset=["primerfondeo"]).copy()
     ff["año"] = ff["primerfondeo"].dt.year
     por_año = ff.groupby("año").agg(cuentas=("idcuenta","count"), aum=("AUM en Dolares","sum")).reset_index()
 
     col_e1, col_e2 = st.columns(2)
     with col_e1:
-        fig7 = go.Figure(go.Bar(
+        fig_al = go.Figure(go.Bar(
             x=por_año["año"].astype(str), y=por_año["cuentas"],
             marker_color="#1f6feb", text=por_año["cuentas"], textposition="outside",
         ))
-        fig7.update_layout(title="Cuentas fondeadas por año", height=280, **PLOTLY)
-        st.plotly_chart(fig7, use_container_width=True)
-
+        fig_al.update_layout(title="Cuentas fondeadas por año", height=280, **PLOTLY)
+        st.plotly_chart(fig_al, use_container_width=True)
     with col_e2:
-        fig8 = go.Figure(go.Bar(
+        fig_au = go.Figure(go.Bar(
             x=por_año["año"].astype(str), y=por_año["aum"], marker_color="#3fb950",
             text=[fmt_k(v) for v in por_año["aum"]], textposition="outside",
             textfont=dict(size=10),
         ))
-        fig8.update_layout(title="AUM actual por cohorte de ingreso", height=280, **PLOTLY)
-        st.plotly_chart(fig8, use_container_width=True)
+        fig_au.update_layout(title="AUM actual por cohorte de ingreso", height=280, **PLOTLY)
+        st.plotly_chart(fig_au, use_container_width=True)
 
 # ── OPORTUNIDADES ──────────────────────────────────────────────────────────────
 st.markdown('<div class="section-title">Oportunidades de acción</div>', unsafe_allow_html=True)
@@ -336,21 +418,21 @@ with op3:
 st.markdown('<div class="section-title">Detalle de cuentas</div>', unsafe_allow_html=True)
 
 show = ["idcuenta","comitente","Fecha de Alta","activo","arancel",
-        "AUM en Dolares","Bolsa Arg","Fondos Arg","pesos","mep","cable",
-        "Comision 90d","Comision 180","Comision 1y",
+        "AUM en Dolares","Fondos Arg","Bolsa Arg","mep","cable",
+        "Comision 1y","Neto 1y","Comision 90d","Neto 90d",
         "$ Disponibles","MEP Disponibles"]
 show  = [c for c in show if c in fdf.columns]
 tabla = fdf[show].copy()
 tabla["activo"] = tabla["activo"].map(lambda x: "✅ Activa" if x==1 else "❌ Inactiva")
-for col in ["AUM en Dolares","Bolsa Arg","Fondos Arg","mep","cable",
-            "Comision 90d","Comision 180","Comision 1y"]:
+for col in ["AUM en Dolares","Fondos Arg","Bolsa Arg","mep","cable",
+            "Comision 1y","Neto 1y","Comision 90d","Neto 90d"]:
     if col in tabla.columns:
         tabla[col] = tabla[col].map(lambda x: f"{x:,.0f}")
 if "Fecha de Alta" in tabla.columns:
     tabla["Fecha de Alta"] = pd.to_datetime(tabla["Fecha de Alta"], errors="coerce").dt.strftime("%d/%m/%Y")
 
-st.dataframe(tabla.sort_values("AUM en Dolares", ascending=False),
-             use_container_width=True, hide_index=True, height=420)
+st.dataframe(tabla.sort_values("Comision 1y", ascending=False),
+             use_container_width=True, hide_index=True, height=450)
 
 st.markdown("---")
 st.caption(f"📋 Mostrando {len(fdf)} de {len(df)} cuentas · Para actualizar: reemplazá `data/cluster.csv` en el repo")

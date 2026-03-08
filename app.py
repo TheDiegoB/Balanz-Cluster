@@ -47,11 +47,11 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ── DATOS ──────────────────────────────────────────────────────────────────────
-DATA_PATH = APP_DIR / "data" / "cluster.csv"
+DATA_PATH = APP_DIR / "data" / "cluster.xlsx"
 
 @st.cache_data(ttl=60)
 def load_data(path):
-    return pd.read_csv(path)
+    return pd.read_excel(path)
 
 def clean_df(df):
     nums = [
@@ -96,7 +96,7 @@ with st.sidebar:
     st.markdown("---")
 
     if not DATA_PATH.exists():
-        st.error("No se encontró `data/cluster.csv`.")
+        st.error("No se encontró `data/cluster.xlsx`.")
         st.stop()
 
     if st.button("🔄 Recargar datos", use_container_width=True):
@@ -124,7 +124,7 @@ with st.sidebar:
     pct_factor  = pct_display / 100
 
     st.markdown("---")
-    st.markdown("**💡 Para actualizar:** reemplazá `data/cluster.csv` en el repo.")
+    st.markdown("**💡 Para actualizar:** reemplazá `data/cluster.xlsx` en el repo.")
 
 # ── FILTROS ────────────────────────────────────────────────────────────────────
 fdf = df.copy()
@@ -346,4 +346,4 @@ with op3:
 
 # ── FOOTER ─────────────────────────────────────────────────────────────────────
 st.markdown("---")
-st.caption(f"📋 Mostrando {len(fdf)} de {len(df)} cuentas · Para actualizar: reemplazá data/cluster.csv en el repo · Mes corriente estimado como promedio de los últimos 90 días")
+st.caption(f"📋 Mostrando {len(fdf)} de {len(df)} cuentas · Para actualizar: reemplazá data/cluster.xlsx en el repo · Mes corriente estimado como promedio de los últimos 90 días")
